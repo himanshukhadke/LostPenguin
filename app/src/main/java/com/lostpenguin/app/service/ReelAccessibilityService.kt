@@ -31,17 +31,8 @@ class ReelAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 val className = event.className?.toString() ?: return
 
-                // Only care about RecyclerView scroll — this is what ViewPager2 uses internally
-                // This is stable across Instagram versions unlike view resource IDs
+                // Only care about RecyclerView scroll — stable across Instagram versions
                 if (!className.contains("RecyclerView", ignoreCase = true)) return
-
-                // Boost confidence with known reel pager IDs (optional — works without too)
-                val viewId = event.viewIdResourceName ?: ""
-                val isLikelyReelPager = viewId.isEmpty()
-                    || viewId.contains("clips_viewer_pager", ignoreCase = true)
-                    || viewId.contains("reel_viewer_pager", ignoreCase = true)
-                    || viewId.contains("clips_viewer", ignoreCase = true)
-                if (!isLikelyReelPager) return
 
                 val capturedFrom = event.fromIndex
                 val capturedTo = event.toIndex
