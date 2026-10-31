@@ -13,12 +13,13 @@ class ReelAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    private var swipeInProgress = false
+    // lastToIndex: highest toIndex seen in current forward swipe burst
+    // pendingCount: how many forward reels are waiting to be counted when burst settles
     private var lastToIndex = -1
-    private var lastSettledIndex = -1
+    private var pendingCount = 0
 
     companion object {
-        private const val SETTLE_DEBOUNCE_MS = 500L
+        private const val SETTLE_DEBOUNCE_MS = 600L
     }
 
     override fun onServiceConnected() {
@@ -38,54 +39,56 @@ class ReelAccessibilityService : AccessibilityService() {
             val fromIndex = event.fromIndex
             val toIndex = event.toIndex
 
-            // Ignore invalid events (Instagram fires -1/-1 for non-reel views)
+            // Ignore invalid events (-1 = non-reel RecyclerView like stories/feed)
             if (fromIndex < 0 || toIndex < 0) return
 
-            ScrollDebugLog.log("SCROLL from=$fromIndex to=$toIndex settled=$lastSettledIndex inProgress=$swipeInProgress")
+            ScrollDebugLog.log("SCROLL from=$fromIndex to=$toIndex last=$lastToIndex pending=$pendingCount")
 
-            // toIndex > fromIndex: items are transitioning (swipe in progress)
-            if (toIndex > fromIndex) {
-                if (toIndex > lastToIndex) {
-                    // Forward swipe: toIndex is increasing
-                    swipeInProgress = true
-                    handler.removeCallbacksAndMessages(null)
-                    // Schedule a count — will fire after SETTLE_DEBOUNCE_MS of no new events
-                    val capturedToIndex = toIndex
-                    handler.postDelayed({
-                        if (swipeInProgress && lastToIndex == capturedToIndex) {
-                            swipeInProgress = false
+            if (toIndex > lastToIndex) {
+                // Forward movement — each new highest toIndex = one more reel passed
+                val newReels = toIndex - lastToIndex
+                pendingCount += newReels
+                lastToIndex = toIndex
+
+                // Reset debounce — count fires 600ms after scrolling stops
+                handler.removeCallbacksAndMessages(null)
+                handler.postDelayed({
+                    if (pendingCount > 0) {
+                        val counted = pendingCount
+                        pendingCount = 0
+                        repeat(counted) {
                             ReelCounterManager.increment(applicationContext)
+                        }
+                        updateOverlay()
+                        ScrollDebugLog.log("COUNTED ✓ +$counted total=${ReelCounterManager.getTodayCount(applicationContext)}")
+                    }
+                }, SETTLE_DEBOUNCE_MS)
+
+                ScrollDebugLog.log("→ forward +$newReels pending=$pendingCount")
+
+            } else if (toIndex < lastToIndex) {
+                // Backward swipe — subtract the reels scrolled back, min 0
+                val backReels = lastToIndex - toIndex
+                pendingCount = maxOf(0, pendingCount - backReels)
+                lastToIndex = toIndex
+
+                // Reset debounce
+                handler.removeCallbacksAndMessages(null)
+                if (pendingCount > 0) {
+                    handler.postDelayed({
+                        if (pendingCount > 0) {
+                            val counted = pendingCount
+                            pendingCount = 0
+                            repeat(counted) {
+                                ReelCounterManager.increment(applicationContext)
+                            }
                             updateOverlay()
-                            ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
+                            ScrollDebugLog.log("COUNTED ✓ +$counted total=${ReelCounterManager.getTodayCount(applicationContext)}")
                         }
                     }, SETTLE_DEBOUNCE_MS)
-                    ScrollDebugLog.log("→ Forward swipe detected (to=$toIndex > last=$lastToIndex)")
-                } else if (toIndex < lastToIndex) {
-                    // Backward swipe: toIndex is decreasing
-                    swipeInProgress = false
-                    handler.removeCallbacksAndMessages(null)
-                    ScrollDebugLog.log("← Back swipe cancelled")
                 }
-                lastToIndex = toIndex
-            }
 
-            // fromIndex == toIndex: scroll settled on a single item
-            if (fromIndex == toIndex && fromIndex >= 0) {
-                if (swipeInProgress && toIndex > lastSettledIndex) {
-                    // Settled on a new reel further forward — count immediately
-                    handler.removeCallbacksAndMessages(null)
-                    swipeInProgress = false
-                    lastSettledIndex = toIndex
-                    lastToIndex = toIndex
-                    ReelCounterManager.increment(applicationContext)
-                    updateOverlay()
-                    ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
-                } else {
-                    // Settled on same or previous reel — just reset state
-                    handler.removeCallbacksAndMessages(null)
-                    swipeInProgress = false
-                    lastToIndex = toIndex
-                }
+                ScrollDebugLog.log("← back -$backReels pending=$pendingCount")
             }
         }
     }
