@@ -55,6 +55,9 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
+    // AppCompat (required for Theme.AppCompat)
+    implementation("androidx.appcompat:appcompat:1.6.1")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
