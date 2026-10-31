@@ -2,27 +2,30 @@ package com.lostpenguin.app.ui
 
 import android.app.Application
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lostpenguin.app.data.AppDatabase
 import com.lostpenguin.app.data.ReelStat
+import com.lostpenguin.app.update.DownloadProgressPoller
+import com.lostpenguin.app.update.UpdateManager
+import com.lostpenguin.app.update.UpdateState
 import com.lostpenguin.app.util.AccessibilityUtils
 import com.lostpenguin.app.util.ReelCounterManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.net.URL
 
 class StatsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val dao = AppDatabase.getInstance(app).reelStatDao()
+    private val progressPoller = DownloadProgressPoller(app)
 
     val allStats: StateFlow<List<ReelStat>> = dao.getAllStats()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -43,9 +46,7 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
     private val _hasAccessibilityPermission = MutableStateFlow(false)
     val hasAccessibilityPermission: StateFlow<Boolean> = _hasAccessibilityPermission
 
-    // null = no update, non-null = new version tag available
-    private val _updateInfo = MutableStateFlow<String?>(null)
-    val updateInfo: StateFlow<String?> = _updateInfo
+    val updateState: StateFlow<UpdateState> = UpdateManager.state
 
     init {
         checkForUpdates()
@@ -61,13 +62,26 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val json = URL("https://api.github.com/repos/himanshukhadke/LostPenguin/releases/latest")
                     .readText()
-                val release = org.json.JSONObject(json)
+                val release = JSONObject(json)
                 val tagName = release.getString("tag_name")  // e.g. "v0.0.9"
                 val currentVersion = getApplication<Application>().packageManager
-                    .getPackageInfo(getApplication<Application>().packageName, 0).versionName  // e.g. "0.0.9"
-                val tagVersion = tagName.removePrefix("v")  // "0.0.9"
-                if (tagVersion != currentVersion) {
-                    _updateInfo.value = tagName
+                    .getPackageInfo(getApplication<Application>().packageName, 0).versionName
+
+                val tagVersion = tagName.removePrefix("v")
+                if (tagVersion == currentVersion) return@launch
+
+                // Find the APK download URL from release assets
+                val assets = release.getJSONArray("assets")
+                var apkUrl = ""
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    if (asset.getString("name").endsWith(".apk")) {
+                        apkUrl = asset.getString("browser_download_url")
+                        break
+                    }
+                }
+                if (apkUrl.isNotEmpty()) {
+                    UpdateManager.setAvailable(tagName, apkUrl)
                 }
             } catch (e: Exception) {
                 // No internet or no releases yet — silently ignore
@@ -75,11 +89,16 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun openUpdate(version: String) {
-        val url = "https://github.com/himanshukhadke/LostPenguin/releases/tag/$version"
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    fun startUpdate(context: Context) {
+        val state = UpdateManager.state.value
+        if (state is UpdateState.Available) {
+            UpdateManager.startDownload(context, state.downloadUrl)
+            progressPoller.start()
         }
-        getApplication<Application>().startActivity(intent)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        progressPoller.stop()
     }
 }

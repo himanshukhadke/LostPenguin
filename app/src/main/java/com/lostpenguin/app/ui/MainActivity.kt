@@ -1,5 +1,6 @@
 package com.lostpenguin.app.ui
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lostpenguin.app.data.ReelStat
+import com.lostpenguin.app.update.UpdateState
 import com.lostpenguin.app.util.AccessibilityUtils
 import com.lostpenguin.app.util.ScrollDebugLog
 
@@ -81,7 +83,7 @@ fun LostPenguinApp(
     val last7Days by viewModel.last7Days.collectAsState()
     val hasOverlay by viewModel.hasOverlayPermission.collectAsState()
     val hasAccessibility by viewModel.hasAccessibilityPermission.collectAsState()
-    val updateInfo by viewModel.updateInfo.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
     var selectedTab by remember { mutableStateOf(0) }
 
     Scaffold(
@@ -109,11 +111,11 @@ fun LostPenguinApp(
                 last7Days = last7Days,
                 hasOverlay = hasOverlay,
                 hasAccessibility = hasAccessibility,
-                updateInfo = updateInfo,
+                updateState = updateState,
                 todayCount = viewModel.todayCount,
                 onRequestOverlayPermission = onRequestOverlayPermission,
                 onOpenAccessibilitySettings = onOpenAccessibilitySettings,
-                onUpdate = { viewModel.openUpdate(it) }
+                onStartUpdate = { viewModel.startUpdate(it) }
             )
             1 -> DebugScreen(modifier = Modifier.padding(padding))
         }
@@ -127,12 +129,13 @@ fun StatsScreen(
     last7Days: List<ReelStat>,
     hasOverlay: Boolean,
     hasAccessibility: Boolean,
-    updateInfo: String?,
+    updateState: UpdateState,
     todayCount: Int,
     onRequestOverlayPermission: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
-    onUpdate: (String) -> Unit
+    onStartUpdate: (Context) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     Surface(
         modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -144,8 +147,9 @@ fun StatsScreen(
         ) {
             item { HeaderSection(todayCount = todayCount) }
 
-            updateInfo?.let { info ->
-                item { UpdateBanner(version = info, onUpdate = onUpdate) }
+            // Update banner — only show when update available or downloading
+            if (updateState !is UpdateState.Idle) {
+                item { UpdateBanner(updateState = updateState, onStartUpdate = { onStartUpdate(context) }) }
             }
 
             if (!hasOverlay) {
@@ -304,30 +308,68 @@ fun HeaderSection(todayCount: Int) {
 }
 
 @Composable
-fun UpdateBanner(version: String, onUpdate: (String) -> Unit) {
+fun UpdateBanner(updateState: UpdateState, onStartUpdate: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2A0D))
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Update Available", fontWeight = FontWeight.Bold, color = Color(0xFFFFD700))
-                Text(
-                    "Version $version is ready to download",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFFFD700).copy(alpha = 0.7f)
-                )
+        when (updateState) {
+            is UpdateState.Available -> {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Update Available", fontWeight = FontWeight.Bold, color = Color(0xFFFFD700))
+                        Text(
+                            "${updateState.version} is ready",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFFFD700).copy(alpha = 0.7f)
+                        )
+                    }
+                    Button(
+                        onClick = onStartUpdate,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700))
+                    ) {
+                        Text("Update", color = Color.Black)
+                    }
+                }
             }
-            Button(
-                onClick = { onUpdate(version) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700))
-            ) {
-                Text("Update", color = Color.Black)
+            is UpdateState.Downloading -> {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Downloading update...", fontWeight = FontWeight.Bold, color = Color(0xFFFFD700))
+                        Text("${updateState.progress}%", color = Color(0xFFFFD700))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { updateState.progress / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color(0xFFFFD700),
+                        trackColor = Color(0xFF444400)
+                    )
+                }
             }
+            is UpdateState.ReadyToInstall -> {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("✓ Download complete!", fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
+                    Button(
+                        onClick = onStartUpdate,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                    ) {
+                        Text("Install Now")
+                    }
+                }
+            }
+            else -> {}
         }
     }
 }
