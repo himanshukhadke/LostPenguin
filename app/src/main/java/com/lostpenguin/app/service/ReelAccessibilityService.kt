@@ -29,6 +29,14 @@ class ReelAccessibilityService : AccessibilityService() {
         event ?: return
         if (event.packageName != "com.instagram.android") return
 
+        // Reset state when Instagram is reopened/foregrounded
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            lastToIndex = -1
+            handler.removeCallbacksAndMessages(null)
+            ScrollDebugLog.log("--- Instagram window changed, state reset ---")
+            return
+        }
+
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             val className = event.className?.toString() ?: return
             if (!className.contains("RecyclerView", ignoreCase = true)) return
