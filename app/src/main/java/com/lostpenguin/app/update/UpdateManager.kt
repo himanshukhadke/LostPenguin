@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import androidx.core.content.FileProvider
+import com.lostpenguin.app.util.ScrollDebugLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
@@ -66,11 +67,12 @@ object UpdateManager {
     }
 
     fun installApk(context: Context) {
-        // Get the APK file — it was saved by DownloadManager to external files dir
         val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILENAME)
 
+        ScrollDebugLog.log("installApk: file=${apkFile.absolutePath} exists=${apkFile.exists()} size=${apkFile.length()}")
+
         if (!apkFile.exists()) {
-            // File missing — reset so user can try again
+            ScrollDebugLog.log("ERROR: APK file not found — resetting update state")
             reset(context)
             return
         }
@@ -81,14 +83,16 @@ object UpdateManager {
                 "${context.packageName}.fileprovider",
                 apkFile
             )
+            ScrollDebugLog.log("installApk: uri=$uri")
 
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "application/vnd.android.package-archive")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }
             context.startActivity(intent)
+            ScrollDebugLog.log("installApk: startActivity called OK")
         } catch (e: Exception) {
-            // FileProvider failed — reset state so user can retry
+            ScrollDebugLog.log("ERROR: installApk failed: ${e.javaClass.simpleName}: ${e.message}")
             reset(context)
         }
     }

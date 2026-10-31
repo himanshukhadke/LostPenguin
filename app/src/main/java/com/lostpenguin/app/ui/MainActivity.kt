@@ -27,11 +27,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.lostpenguin.app.data.ReelStat
 import com.lostpenguin.app.update.UpdateState
 import com.lostpenguin.app.util.AccessibilityUtils
+import com.lostpenguin.app.util.LogFileWriter
 import com.lostpenguin.app.util.ScrollDebugLog
-
 class MainActivity : ComponentActivity() {
 
     private val viewModel: StatsViewModel by viewModels()
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ScrollDebugLog.init(this)
         viewModel.refreshPermissions(this)
         setContent {
             LostPenguinTheme {
@@ -219,6 +221,7 @@ fun StatsScreen(
 @Composable
 fun DebugScreen(modifier: Modifier) {
     var logs by remember { mutableStateOf(ScrollDebugLog.getLogs()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     DisposableEffect(Unit) {
         val listener = { logs = ScrollDebugLog.getLogs() }
@@ -237,6 +240,42 @@ fun DebugScreen(modifier: Modifier) {
                 Text("${logs.size} events", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
             }
             Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        val file = LogFileWriter.getFile()
+                        if (file != null && file.exists()) {
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                file
+                            )
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                putExtra(Intent.EXTRA_SUBJECT, "LostPenguin Debug Log")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share Logs"))
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4D9FFF))
+                ) {
+                    Text("Share Logs", fontSize = 12.sp)
+                }
+                Button(
+                    onClick = { ScrollDebugLog.clear() },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF444444))
+                ) {
+                    Text("Clear", fontSize = 12.sp)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
             Text(
                 "Open Instagram → scroll reels → come back here",
                 style = MaterialTheme.typography.bodySmall,
@@ -259,7 +298,8 @@ fun DebugScreen(modifier: Modifier) {
                             color = when {
                                 log.contains("COUNTED") -> Color(0xFF4CAF50)
                                 log.contains("SCROLL") -> Color(0xFF4D9FFF)
-                                log.contains("ignored") -> Color(0xFFFF6B6B)
+                                log.contains("ERROR") -> Color(0xFFFF3333)
+                                log.contains("ignored") || log.contains("cancelled") || log.contains("back") -> Color(0xFFFF6B6B)
                                 else -> Color.White.copy(alpha = 0.7f)
                             },
                             modifier = Modifier.padding(vertical = 2.dp)
