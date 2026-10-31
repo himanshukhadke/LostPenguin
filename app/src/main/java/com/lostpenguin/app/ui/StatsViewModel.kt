@@ -8,6 +8,7 @@ import com.lostpenguin.app.data.ReelStat
 import com.lostpenguin.app.util.ReelCounterManager
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 class StatsViewModel(app: Application) : AndroidViewModel(app) {
@@ -21,11 +22,8 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val totalCount: StateFlow<Int> = dao.getTotalCount()
+        .map { it ?: 0 }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-        .let { flow ->
-            kotlinx.coroutines.flow.map(flow) { it ?: 0 }
-                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-        }
 
     val todayCount: Int
         get() = ReelCounterManager.getTodayCount(getApplication())
