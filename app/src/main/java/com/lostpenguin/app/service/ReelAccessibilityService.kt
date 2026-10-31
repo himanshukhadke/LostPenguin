@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import com.lostpenguin.app.overlay.OverlayService
 import com.lostpenguin.app.util.ReelCounterManager
 import com.lostpenguin.app.util.ScrollDebugLog
@@ -13,9 +12,10 @@ import com.lostpenguin.app.util.ScrollDebugLog
 class ReelAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var lastScrollY = 0
-    private var isOnReels = false
-    private var pendingCount = false
+
+    // Track whether a forward swipe is in progress
+    private var swipeInProgress = false
+    private var lastToIndex = 0
 
     companion object {
         private const val SETTLE_DEBOUNCE_MS = 500L
@@ -31,82 +31,47 @@ class ReelAccessibilityService : AccessibilityService() {
         event ?: return
         if (event.packageName != "com.instagram.android") return
 
-        when (event.eventType) {
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            val className = event.className?.toString() ?: return
+            if (!className.contains("RecyclerView", ignoreCase = true)) return
 
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                val className = event.className?.toString() ?: return
-                if (!className.contains("RecyclerView", ignoreCase = true)) return
+            val fromIndex = event.fromIndex
+            val toIndex = event.toIndex
 
-                val scrollY = event.scrollY
-                val fromIndex = event.fromIndex
-                val toIndex = event.toIndex
-                val maxScrollY = event.maxScrollY
+            ScrollDebugLog.log("SCROLL from=$fromIndex to=$toIndex swipeInProgress=$swipeInProgress")
 
-                ScrollDebugLog.log(
-                    "SCROLL sY=$scrollY maxSY=$maxScrollY " +
-                    "from=$fromIndex to=$toIndex " +
-                    "onReels=$isOnReels"
-                )
-
-                if (scrollY > lastScrollY) {
-                    scheduleCount()
-                }
-                lastScrollY = scrollY
-            }
-
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                val root = rootInActiveWindow ?: return
-                val wasOnReels = isOnReels
-                isOnReels = isReelsScreen(root)
-                root.recycle()
-
-                if (wasOnReels != isOnReels) {
-                    ScrollDebugLog.log("isOnReels changed: $wasOnReels → $isOnReels")
-                }
-
-                if (!isOnReels) {
-                    handler.removeCallbacksAndMessages(null)
-                    pendingCount = false
-                    lastScrollY = 0
-                }
-            }
-        }
-    }
-
-    private fun scheduleCount() {
-        if (!pendingCount) {
-            pendingCount = true
-            handler.removeCallbacksAndMessages(null)
-            handler.postDelayed({
-                pendingCount = false
-                if (isOnReels) {
-                    ReelCounterManager.increment(applicationContext)
-                    updateOverlay()
-                    ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
+            // toIndex > fromIndex means swipe is in progress (multiple items visible)
+            if (toIndex > fromIndex) {
+                // Only count forward swipes (toIndex increasing from last seen)
+                if (toIndex > lastToIndex) {
+                    swipeInProgress = true
+                    ScrollDebugLog.log("→ Forward swipe detected (to=$toIndex > last=$lastToIndex)")
                 } else {
-                    ScrollDebugLog.log("SCROLL ignored — not on reels")
+                    // toIndex decreasing = going back, cancel any pending count
+                    swipeInProgress = false
+                    handler.removeCallbacksAndMessages(null)
+                    ScrollDebugLog.log("← Back swipe detected, cancelled")
                 }
-            }, SETTLE_DEBOUNCE_MS)
-        }
-    }
+                lastToIndex = toIndex
+            }
 
-    private fun isReelsScreen(root: AccessibilityNodeInfo): Boolean {
-        val reelIds = listOf(
-            "clips_viewer_video_container",
-            "reel_viewer_container",
-            "clips_swipe_refresh_container",
-            "clips_tab_content_container",
-            "unified_clips_player_grid_view",
-            "clips_viewer_pager"
-        )
-        for (id in reelIds) {
-            if (root.findAccessibilityNodeInfosByViewId(
-                    "com.instagram.android:id/$id"
-                ).isNotEmpty()
-            ) return true
+            // fromIndex == toIndex means scroll settled on exactly one item
+            if (fromIndex == toIndex) {
+                if (swipeInProgress) {
+                    // Settled after a forward swipe — count it
+                    handler.removeCallbacksAndMessages(null)
+                    handler.postDelayed({
+                        swipeInProgress = false
+                        lastToIndex = 0
+                        ReelCounterManager.increment(applicationContext)
+                        updateOverlay()
+                        ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
+                    }, SETTLE_DEBOUNCE_MS)
+                }
+                // Reset lastToIndex when settled
+                lastToIndex = 0
+            }
         }
-        return false
     }
 
     private fun startOverlayService() {
