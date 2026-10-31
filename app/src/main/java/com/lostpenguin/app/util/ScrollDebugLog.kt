@@ -1,7 +1,7 @@
 package com.lostpenguin.app.util
 
 object ScrollDebugLog {
-    private val logs = ArrayDeque<String>(maxSize = 50)
+    private val logs = ArrayDeque<String>()
     private val listeners = mutableListOf<() -> Unit>()
 
     fun log(message: String) {
@@ -15,6 +15,4 @@ object ScrollDebugLog {
 
     fun addListener(listener: () -> Unit) { listeners.add(listener) }
     fun removeListener(listener: () -> Unit) { listeners.remove(listener) }
-
-    private fun ArrayDeque(maxSize: Int) = ArrayDeque<String>()
 }
