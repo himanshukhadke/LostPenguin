@@ -66,9 +66,12 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
                 if (releases.length() == 0) return@launch
                 val latest = releases.getJSONObject(0)
                 val tagName = latest.getString("tag_name")
-                val currentVersion = "v${getApplication<Application>().packageManager
-                    .getPackageInfo(getApplication<Application>().packageName, 0).versionName}"
-                if (tagName != currentVersion) {
+                val currentVersion = getApplication<Application>().packageManager
+                    .getPackageInfo(getApplication<Application>().packageName, 0).versionName
+                // tagName format: "v1.0-202611011200", currentVersion: "1.0"
+                // Only show update if the version number part is different
+                val tagVersion = tagName.removePrefix("v").substringBefore("-")
+                if (tagVersion != currentVersion) {
                     _updateInfo.value = tagName
                 }
             } catch (e: Exception) {

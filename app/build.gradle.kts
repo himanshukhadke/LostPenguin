@@ -12,8 +12,8 @@ android {
         applicationId = "com.lostpenguin.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
+        versionName = "0.0.${System.getenv("BUILD_NUMBER") ?: "1"}"
     }
 
     buildTypes {

@@ -2,15 +2,20 @@ package com.lostpenguin.app.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import com.lostpenguin.app.overlay.OverlayService
 import com.lostpenguin.app.util.ReelCounterManager
 
 class ReelAccessibilityService : AccessibilityService() {
 
-    private var isOnReels = false
-    private var lastScrollTime = 0L
+    private val handler = Handler(Looper.getMainLooper())
+    private var lastSettledReelIndex = -1
+
+    companion object {
+        private const val SETTLE_DEBOUNCE_MS = 400L
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -22,56 +27,51 @@ class ReelAccessibilityService : AccessibilityService() {
         if (event.packageName != "com.instagram.android") return
 
         when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                val root = rootInActiveWindow ?: return
-                isOnReels = isReelsScreen(root)
-                root.recycle()
-            }
+
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                if (!isOnReels) return
-                val now = System.currentTimeMillis()
-                // Debounce: at least 600ms between counts to avoid double-counting
-                if (now - lastScrollTime > 600) {
-                    lastScrollTime = now
-                    ReelCounterManager.increment(applicationContext)
-                    updateOverlay()
-                }
+                val className = event.className?.toString() ?: return
+
+                // Only care about RecyclerView scroll — this is what ViewPager2 uses internally
+                // This is stable across Instagram versions unlike view resource IDs
+                if (!className.contains("RecyclerView", ignoreCase = true)) return
+
+                // Boost confidence with known reel pager IDs (optional — works without too)
+                val viewId = event.viewIdResourceName ?: ""
+                val isLikelyReelPager = viewId.isEmpty()
+                    || viewId.contains("clips_viewer_pager", ignoreCase = true)
+                    || viewId.contains("reel_viewer_pager", ignoreCase = true)
+                    || viewId.contains("clips_viewer", ignoreCase = true)
+                if (!isLikelyReelPager) return
+
+                val capturedFrom = event.fromIndex
+                val capturedTo = event.toIndex
+
+                // Debounce: cancel previous check and re-arm
+                // We wait for scroll to fully settle before counting
+                handler.removeCallbacksAndMessages(null)
+                handler.postDelayed({
+                    // fromIndex == toIndex means exactly one reel is fully visible (settled)
+                    if (capturedFrom == capturedTo && capturedFrom != lastSettledReelIndex) {
+                        val isNextReel = lastSettledReelIndex == -1
+                            || capturedFrom > lastSettledReelIndex
+
+                        if (isNextReel) {
+                            // User scrolled forward to a new reel — count it
+                            ReelCounterManager.increment(applicationContext)
+                            updateOverlay()
+                        }
+                        // If capturedFrom < lastSettledReelIndex → went back → don't count
+                        lastSettledReelIndex = capturedFrom
+                    }
+                }, SETTLE_DEBOUNCE_MS)
+            }
+
+            // Reset tracking when user navigates away from Reels screen
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                lastSettledReelIndex = -1
+                handler.removeCallbacksAndMessages(null)
             }
         }
-    }
-
-    private fun isReelsScreen(root: AccessibilityNodeInfo): Boolean {
-        // Check multiple indicators Instagram uses for the reels feed
-        val reelIds = listOf(
-            "clips_viewer_video_container",
-            "reel_viewer_container",
-            "clips_swipe_refresh_container",
-            "clips_tab_content_container",
-            "unified_clips_player_grid_view"
-        )
-        for (id in reelIds) {
-            if (root.findAccessibilityNodeInfosByViewId(
-                    "com.instagram.android:id/$id"
-                ).isNotEmpty()
-            ) return true
-        }
-        // Fallback: check content description for reel indicators
-        return containsTextNode(root, "Reels") || containsTextNode(root, "reel")
-    }
-
-    private fun containsTextNode(node: AccessibilityNodeInfo, text: String): Boolean {
-        val desc = node.contentDescription?.toString() ?: ""
-        if (desc.contains(text, ignoreCase = true)) return true
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            if (containsTextNode(child, text)) {
-                child.recycle()
-                return true
-            }
-            child.recycle()
-        }
-        return false
     }
 
     private fun startOverlayService() {
@@ -93,6 +93,7 @@ class ReelAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
         stopService(Intent(this, OverlayService::class.java))
     }
 }
