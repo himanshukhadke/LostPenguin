@@ -13,9 +13,9 @@ class ReelAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    // Track whether a forward swipe is in progress
     private var swipeInProgress = false
-    private var lastToIndex = 0
+    private var lastToIndex = -1
+    private var lastSettledIndex = -1
 
     companion object {
         private const val SETTLE_DEBOUNCE_MS = 500L
@@ -38,38 +38,54 @@ class ReelAccessibilityService : AccessibilityService() {
             val fromIndex = event.fromIndex
             val toIndex = event.toIndex
 
-            ScrollDebugLog.log("SCROLL from=$fromIndex to=$toIndex swipeInProgress=$swipeInProgress")
+            // Ignore invalid events (Instagram fires -1/-1 for non-reel views)
+            if (fromIndex < 0 || toIndex < 0) return
 
-            // toIndex > fromIndex means swipe is in progress (multiple items visible)
+            ScrollDebugLog.log("SCROLL from=$fromIndex to=$toIndex settled=$lastSettledIndex inProgress=$swipeInProgress")
+
+            // toIndex > fromIndex: items are transitioning (swipe in progress)
             if (toIndex > fromIndex) {
-                // Only count forward swipes (toIndex increasing from last seen)
                 if (toIndex > lastToIndex) {
+                    // Forward swipe: toIndex is increasing
                     swipeInProgress = true
+                    handler.removeCallbacksAndMessages(null)
+                    // Schedule a count — will fire after SETTLE_DEBOUNCE_MS of no new events
+                    val capturedToIndex = toIndex
+                    handler.postDelayed({
+                        if (swipeInProgress && lastToIndex == capturedToIndex) {
+                            swipeInProgress = false
+                            ReelCounterManager.increment(applicationContext)
+                            updateOverlay()
+                            ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
+                        }
+                    }, SETTLE_DEBOUNCE_MS)
                     ScrollDebugLog.log("→ Forward swipe detected (to=$toIndex > last=$lastToIndex)")
-                } else {
-                    // toIndex decreasing = going back, cancel any pending count
+                } else if (toIndex < lastToIndex) {
+                    // Backward swipe: toIndex is decreasing
                     swipeInProgress = false
                     handler.removeCallbacksAndMessages(null)
-                    ScrollDebugLog.log("← Back swipe detected, cancelled")
+                    ScrollDebugLog.log("← Back swipe cancelled")
                 }
                 lastToIndex = toIndex
             }
 
-            // fromIndex == toIndex means scroll settled on exactly one item
-            if (fromIndex == toIndex) {
-                if (swipeInProgress) {
-                    // Settled after a forward swipe — count it
+            // fromIndex == toIndex: scroll settled on a single item
+            if (fromIndex == toIndex && fromIndex >= 0) {
+                if (swipeInProgress && toIndex > lastSettledIndex) {
+                    // Settled on a new reel further forward — count immediately
                     handler.removeCallbacksAndMessages(null)
-                    handler.postDelayed({
-                        swipeInProgress = false
-                        lastToIndex = 0
-                        ReelCounterManager.increment(applicationContext)
-                        updateOverlay()
-                        ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
-                    }, SETTLE_DEBOUNCE_MS)
+                    swipeInProgress = false
+                    lastSettledIndex = toIndex
+                    lastToIndex = toIndex
+                    ReelCounterManager.increment(applicationContext)
+                    updateOverlay()
+                    ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
+                } else {
+                    // Settled on same or previous reel — just reset state
+                    handler.removeCallbacksAndMessages(null)
+                    swipeInProgress = false
+                    lastToIndex = toIndex
                 }
-                // Reset lastToIndex when settled
-                lastToIndex = 0
             }
         }
     }
