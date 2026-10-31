@@ -9,8 +9,8 @@ import com.lostpenguin.app.util.ReelCounterManager
 
 class ReelAccessibilityService : AccessibilityService() {
 
-    private var isOnReelsTab = false
-    private var lastReelId: String? = null
+    private var isOnReels = false
+    private var lastScrollTime = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -24,57 +24,54 @@ class ReelAccessibilityService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                checkIfOnReels(event)
+                val root = rootInActiveWindow ?: return
+                isOnReels = isReelsScreen(root)
+                root.recycle()
             }
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
-                if (isOnReelsTab) {
-                    countReelScroll(event)
+                if (!isOnReels) return
+                val now = System.currentTimeMillis()
+                // Debounce: at least 600ms between counts to avoid double-counting
+                if (now - lastScrollTime > 600) {
+                    lastScrollTime = now
+                    ReelCounterManager.increment(applicationContext)
+                    updateOverlay()
                 }
             }
         }
     }
 
-    private fun checkIfOnReels(event: AccessibilityEvent) {
-        val source = event.source ?: return
-        // Instagram marks the reels feed with specific content descriptions
-        val onReels = containsReelIndicator(source)
-        if (onReels && !isOnReelsTab) {
-            isOnReelsTab = true
-            startOverlayService()
-        } else if (!onReels && isOnReelsTab) {
-            isOnReelsTab = false
-            updateOverlay()
-        }
-        source.recycle()
-    }
-
-    private fun containsReelIndicator(node: AccessibilityNodeInfo): Boolean {
-        // Check for reel-specific view IDs Instagram uses
-        val reelIndicators = listOf(
+    private fun isReelsScreen(root: AccessibilityNodeInfo): Boolean {
+        // Check multiple indicators Instagram uses for the reels feed
+        val reelIds = listOf(
             "clips_viewer_video_container",
             "reel_viewer_container",
-            "clips_swipe_refresh_container"
+            "clips_swipe_refresh_container",
+            "clips_tab_content_container",
+            "unified_clips_player_grid_view"
         )
-        for (indicator in reelIndicators) {
-            if (node.findAccessibilityNodeInfosByViewId("com.instagram.android:id/$indicator").isNotEmpty()) {
-                return true
-            }
+        for (id in reelIds) {
+            if (root.findAccessibilityNodeInfosByViewId(
+                    "com.instagram.android:id/$id"
+                ).isNotEmpty()
+            ) return true
         }
-        return false
+        // Fallback: check content description for reel indicators
+        return containsTextNode(root, "Reels") || containsTextNode(root, "reel")
     }
 
-    private fun countReelScroll(event: AccessibilityEvent) {
-        // Each upward scroll in reels = new reel viewed
-        val source = event.source ?: return
-        val nodeId = source.viewIdResourceName ?: ""
-        source.recycle()
-
-        // Debounce: only count if it's a different reel container scroll
-        if (nodeId != lastReelId && nodeId.contains("reel", ignoreCase = true)) {
-            lastReelId = nodeId
-            ReelCounterManager.increment(applicationContext)
-            updateOverlay()
+    private fun containsTextNode(node: AccessibilityNodeInfo, text: String): Boolean {
+        val desc = node.contentDescription?.toString() ?: ""
+        if (desc.contains(text, ignoreCase = true)) return true
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (containsTextNode(child, text)) {
+                child.recycle()
+                return true
+            }
+            child.recycle()
         }
+        return false
     }
 
     private fun startOverlayService() {

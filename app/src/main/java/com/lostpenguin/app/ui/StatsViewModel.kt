@@ -1,15 +1,25 @@
 package com.lostpenguin.app.ui
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lostpenguin.app.data.AppDatabase
 import com.lostpenguin.app.data.ReelStat
+import com.lostpenguin.app.util.AccessibilityUtils
 import com.lostpenguin.app.util.ReelCounterManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import java.net.URL
 
 class StatsViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -27,4 +37,51 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
 
     val todayCount: Int
         get() = ReelCounterManager.getTodayCount(getApplication())
+
+    private val _hasOverlayPermission = MutableStateFlow(false)
+    val hasOverlayPermission: StateFlow<Boolean> = _hasOverlayPermission
+
+    private val _hasAccessibilityPermission = MutableStateFlow(false)
+    val hasAccessibilityPermission: StateFlow<Boolean> = _hasAccessibilityPermission
+
+    // null = no update, non-null = new version tag available
+    private val _updateInfo = MutableStateFlow<String?>(null)
+    val updateInfo: StateFlow<String?> = _updateInfo
+
+    init {
+        checkForUpdates()
+    }
+
+    fun refreshPermissions(context: Context) {
+        _hasOverlayPermission.value = Settings.canDrawOverlays(context)
+        _hasAccessibilityPermission.value = AccessibilityUtils.isAccessibilityServiceEnabled(context)
+    }
+
+    private fun checkForUpdates() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val json = URL("https://api.github.com/repos/himanshukhadke/LostPenguin/releases")
+                    .readText()
+                val releases = JSONArray(json)
+                if (releases.length() == 0) return@launch
+                val latest = releases.getJSONObject(0)
+                val tagName = latest.getString("tag_name")
+                val currentVersion = "v${getApplication<Application>().packageManager
+                    .getPackageInfo(getApplication<Application>().packageName, 0).versionName}"
+                if (tagName != currentVersion) {
+                    _updateInfo.value = tagName
+                }
+            } catch (e: Exception) {
+                // No internet or no releases yet — silently ignore
+            }
+        }
+    }
+
+    fun openUpdate(version: String) {
+        val url = "https://github.com/himanshukhadke/LostPenguin/releases/tag/$version"
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        getApplication<Application>().startActivity(intent)
+    }
 }
