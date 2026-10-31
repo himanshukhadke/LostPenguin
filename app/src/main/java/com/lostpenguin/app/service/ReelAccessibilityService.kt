@@ -60,10 +60,11 @@ class ReelAccessibilityService : AccessibilityService() {
                 }, SETTLE_DEBOUNCE_MS)
                 ScrollDebugLog.log("→ forward to=$toIndex")
             } else if (toIndex < lastToIndex) {
-                // Scrolled back — cancel pending count
+                // toIndex went down — could be back swipe OR new Instagram session (indices reset to 0)
+                // Reset lastToIndex so next forward swipe always counts correctly
                 lastToIndex = toIndex
                 handler.removeCallbacksAndMessages(null)
-                ScrollDebugLog.log("← back cancelled")
+                ScrollDebugLog.log("↓ index drop to=$toIndex last reset")
             }
         }
     }
