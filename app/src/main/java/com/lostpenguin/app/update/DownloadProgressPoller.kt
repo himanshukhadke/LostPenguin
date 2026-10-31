@@ -27,6 +27,11 @@ class DownloadProgressPoller(private val context: Context) {
                 val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
                 if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING) {
                     handler.postDelayed(this, 500)
+                } else {
+                    // STATUS_SUCCESSFUL, STATUS_FAILED, STATUS_PAUSED — stop polling
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                        UpdateManager.updateProgress(100)
+                    }
                 }
             }
             cursor.close()

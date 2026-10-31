@@ -90,10 +90,15 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startUpdate(context: Context) {
-        val state = UpdateManager.state.value
-        if (state is UpdateState.Available) {
-            UpdateManager.startDownload(context, state.downloadUrl)
-            progressPoller.start()
+        when (val state = UpdateManager.state.value) {
+            is UpdateState.Available -> {
+                UpdateManager.startDownload(context, state.downloadUrl)
+                progressPoller.start()
+            }
+            is UpdateState.ReadyToInstall -> {
+                UpdateManager.installApk(context)
+            }
+            else -> {}
         }
     }
 

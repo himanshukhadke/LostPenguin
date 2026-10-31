@@ -49,9 +49,8 @@ object UpdateManager {
         _state.value = UpdateState.Downloading(progress)
     }
 
-    fun onDownloadComplete(context: Context) {
+    fun markReadyToInstall() {
         _state.value = UpdateState.ReadyToInstall
-        installApk(context)
     }
 
     fun installApk(context: Context) {
