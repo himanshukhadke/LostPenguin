@@ -5,12 +5,19 @@ import android.provider.Settings
 
 object AccessibilityUtils {
     fun isAccessibilityServiceEnabled(context: Context): Boolean {
-        val expectedService = "${context.packageName}/.service.ReelAccessibilityService"
+        val pkg = context.packageName
         val enabledServices = Settings.Secure.getString(
             context.contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
+
+        // Android stores component names in two formats depending on manufacturer:
+        // "com.lostpenguin.app/.service.ReelAccessibilityService"  (short form)
+        // "com.lostpenguin.app/com.lostpenguin.app.service.ReelAccessibilityService" (full form)
         return enabledServices.split(":")
-            .any { it.equals(expectedService, ignoreCase = true) }
+            .any { component ->
+                component.startsWith(pkg, ignoreCase = true) &&
+                component.contains("ReelAccessibilityService", ignoreCase = true)
+            }
     }
 }

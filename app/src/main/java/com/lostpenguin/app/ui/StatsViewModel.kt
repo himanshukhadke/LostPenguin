@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import org.json.JSONArray
 import java.net.URL
 
 class StatsViewModel(app: Application) : AndroidViewModel(app) {
@@ -60,17 +59,13 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
     private fun checkForUpdates() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val json = URL("https://api.github.com/repos/himanshukhadke/LostPenguin/releases")
+                val json = URL("https://api.github.com/repos/himanshukhadke/LostPenguin/releases/latest")
                     .readText()
-                val releases = JSONArray(json)
-                if (releases.length() == 0) return@launch
-                val latest = releases.getJSONObject(0)
-                val tagName = latest.getString("tag_name")
+                val release = org.json.JSONObject(json)
+                val tagName = release.getString("tag_name")  // e.g. "v0.0.9"
                 val currentVersion = getApplication<Application>().packageManager
-                    .getPackageInfo(getApplication<Application>().packageName, 0).versionName
-                // tagName format: "v1.0-202611011200", currentVersion: "1.0"
-                // Only show update if the version number part is different
-                val tagVersion = tagName.removePrefix("v").substringBefore("-")
+                    .getPackageInfo(getApplication<Application>().packageName, 0).versionName  // e.g. "0.0.9"
+                val tagVersion = tagName.removePrefix("v")  // "0.0.9"
                 if (tagVersion != currentVersion) {
                     _updateInfo.value = tagName
                 }

@@ -31,36 +31,40 @@ class ReelAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 val className = event.className?.toString() ?: return
 
-                // Only care about RecyclerView scroll — stable across Instagram versions
+                // RecyclerView is what ViewPager2 uses internally — stable across Instagram versions
                 if (!className.contains("RecyclerView", ignoreCase = true)) return
 
                 val capturedFrom = event.fromIndex
                 val capturedTo = event.toIndex
 
-                // Debounce: cancel previous check and re-arm
-                // We wait for scroll to fully settle before counting
+                // Debounce: cancel previous check and re-arm on each scroll event
+                // Waits for scroll animation to fully settle before reading final index
                 handler.removeCallbacksAndMessages(null)
                 handler.postDelayed({
-                    // fromIndex == toIndex means exactly one reel is fully visible (settled)
+                    // fromIndex == toIndex means exactly one item (reel) is fully visible
                     if (capturedFrom == capturedTo && capturedFrom != lastSettledReelIndex) {
                         val isNextReel = lastSettledReelIndex == -1
                             || capturedFrom > lastSettledReelIndex
 
                         if (isNextReel) {
-                            // User scrolled forward to a new reel — count it
                             ReelCounterManager.increment(applicationContext)
                             updateOverlay()
                         }
-                        // If capturedFrom < lastSettledReelIndex → went back → don't count
                         lastSettledReelIndex = capturedFrom
                     }
                 }, SETTLE_DEBOUNCE_MS)
             }
 
-            // Reset tracking when user navigates away from Reels screen
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                lastSettledReelIndex = -1
-                handler.removeCallbacksAndMessages(null)
+            // Only reset when the app itself changes window (user leaves Instagram entirely)
+            // NOT on every TYPE_WINDOW_STATE_CHANGED which fires for dialogs, bottom sheets etc.
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                val stillOnInstagram = windows?.any {
+                    it.root?.packageName == "com.instagram.android"
+                } ?: false
+                if (!stillOnInstagram) {
+                    lastSettledReelIndex = -1
+                    handler.removeCallbacksAndMessages(null)
+                }
             }
         }
     }
