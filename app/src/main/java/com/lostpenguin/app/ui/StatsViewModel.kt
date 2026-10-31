@@ -49,6 +49,7 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
     val updateState: StateFlow<UpdateState> = UpdateManager.state
 
     init {
+        UpdateManager.restoreDownloadId(app)
         checkForUpdates()
     }
 

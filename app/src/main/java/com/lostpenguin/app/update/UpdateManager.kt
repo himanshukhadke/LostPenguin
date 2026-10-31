@@ -2,6 +2,7 @@ package com.lostpenguin.app.update
 
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import androidx.core.content.FileProvider
@@ -22,31 +23,42 @@ object UpdateManager {
     val state: StateFlow<UpdateState> = _state
 
     var downloadId: Long = -1L
-    private var pendingApkFile: File? = null
+    private const val APK_FILENAME = "LostPenguin-update.apk"
+    private const val PREFS_NAME = "update_prefs"
+    private const val KEY_DOWNLOAD_ID = "download_id"
 
     fun setAvailable(version: String, downloadUrl: String) {
         _state.value = UpdateState.Available(version, downloadUrl)
     }
 
     fun startDownload(context: Context, downloadUrl: String) {
-        val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "LostPenguin-update.apk")
+        // Delete old file if exists
+        val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILENAME)
         if (apkFile.exists()) apkFile.delete()
-        pendingApkFile = apkFile
 
         val request = DownloadManager.Request(Uri.parse(downloadUrl))
             .setTitle("LostPenguin Update")
             .setDescription("Downloading latest version...")
-            .setDestinationUri(Uri.fromFile(apkFile))
+            // Use setDestinationInExternalFilesDir — avoids Uri.fromFile SecurityException on Android 7+
+            .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, APK_FILENAME)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
             .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
 
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         downloadId = dm.enqueue(request)
+
+        // Persist downloadId so DownloadCompleteReceiver can match it after process restart
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putLong(KEY_DOWNLOAD_ID, downloadId).apply()
+
         _state.value = UpdateState.Downloading(0)
     }
 
     fun updateProgress(progress: Int) {
-        _state.value = UpdateState.Downloading(progress)
+        if (_state.value is UpdateState.Downloading) {
+            _state.value = UpdateState.Downloading(progress)
+        }
     }
 
     fun markReadyToInstall() {
@@ -54,26 +66,44 @@ object UpdateManager {
     }
 
     fun installApk(context: Context) {
-        val apkFile = pendingApkFile ?: return
-        if (!apkFile.exists()) return
+        // Get the APK file — it was saved by DownloadManager to external files dir
+        val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILENAME)
 
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            apkFile
-        )
-
-        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+        if (!apkFile.exists()) {
+            // File missing — reset so user can try again
+            reset(context)
+            return
         }
-        context.startActivity(intent)
+
+        try {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            // FileProvider failed — reset state so user can retry
+            reset(context)
+        }
     }
 
-    fun reset() {
+    fun reset(context: Context? = null) {
         _state.value = UpdateState.Idle
         downloadId = -1L
-        pendingApkFile = null
+        context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?.edit()?.remove(KEY_DOWNLOAD_ID)?.apply()
+    }
+
+    // Called on app start to restore downloadId if process was killed mid-download
+    fun restoreDownloadId(context: Context) {
+        val saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_DOWNLOAD_ID, -1L)
+        if (saved != -1L) downloadId = saved
     }
 }
