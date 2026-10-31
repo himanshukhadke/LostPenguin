@@ -5,26 +5,25 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.lostpenguin.app.overlay.OverlayService
 import com.lostpenguin.app.util.ReelCounterManager
+import com.lostpenguin.app.util.ScrollDebugLog
 
 class ReelAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-
-    // Track scroll position per approach
     private var lastScrollY = 0
-    private var lastScrollX = 0
     private var isOnReels = false
     private var pendingCount = false
 
     companion object {
         private const val SETTLE_DEBOUNCE_MS = 500L
-        private const val MIN_SCROLL_DELTA = 1
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        ScrollDebugLog.log("Service connected")
         startOverlayService()
     }
 
@@ -39,51 +38,32 @@ class ReelAccessibilityService : AccessibilityService() {
                 if (!className.contains("RecyclerView", ignoreCase = true)) return
 
                 val scrollY = event.scrollY
-                val scrollX = event.scrollX
                 val fromIndex = event.fromIndex
                 val toIndex = event.toIndex
                 val maxScrollY = event.maxScrollY
 
-                // Log all values to understand what Instagram actually sends
-                android.util.Log.d("LostPenguin",
-                    "SCROLL className=$className " +
-                    "scrollX=$scrollX scrollY=$scrollY maxScrollY=$maxScrollY " +
-                    "fromIndex=$fromIndex toIndex=$toIndex " +
-                    "itemCount=${event.itemCount}"
+                ScrollDebugLog.log(
+                    "SCROLL sY=$scrollY maxSY=$maxScrollY " +
+                    "from=$fromIndex to=$toIndex " +
+                    "onReels=$isOnReels"
                 )
 
-                // Approach 1: scrollY changes (pixel-based, works on some Instagram versions)
-                if (maxScrollY > 0 && scrollY > lastScrollY + MIN_SCROLL_DELTA) {
-                    scheduleCount()
-                }
-
-                // Approach 2: fromIndex increases (page-based, works on others)
-                if (fromIndex > 0 && fromIndex > toIndex.coerceAtLeast(0) + 0) {
-                    // fromIndex advanced
-                }
-
-                // Approach 3: ANY downward scroll on reels tab — use scrollY delta
                 if (scrollY > lastScrollY) {
                     scheduleCount()
                 }
-
                 lastScrollY = scrollY
-                lastScrollX = scrollX
             }
 
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                val className = event.className?.toString() ?: ""
-                val text = event.text.joinToString()
-
-                android.util.Log.d("LostPenguin",
-                    "WINDOW className=$className text=$text"
-                )
-
-                // Detect if we're on the reels tab
                 val root = rootInActiveWindow ?: return
+                val wasOnReels = isOnReels
                 isOnReels = isReelsScreen(root)
                 root.recycle()
+
+                if (wasOnReels != isOnReels) {
+                    ScrollDebugLog.log("isOnReels changed: $wasOnReels → $isOnReels")
+                }
 
                 if (!isOnReels) {
                     handler.removeCallbacksAndMessages(null)
@@ -100,14 +80,18 @@ class ReelAccessibilityService : AccessibilityService() {
             handler.removeCallbacksAndMessages(null)
             handler.postDelayed({
                 pendingCount = false
-                ReelCounterManager.increment(applicationContext)
-                updateOverlay()
-                android.util.Log.d("LostPenguin", "COUNTED reel, total=${ReelCounterManager.getTodayCount(applicationContext)}")
+                if (isOnReels) {
+                    ReelCounterManager.increment(applicationContext)
+                    updateOverlay()
+                    ScrollDebugLog.log("COUNTED ✓ total=${ReelCounterManager.getTodayCount(applicationContext)}")
+                } else {
+                    ScrollDebugLog.log("SCROLL ignored — not on reels")
+                }
             }, SETTLE_DEBOUNCE_MS)
         }
     }
 
-    private fun isReelsScreen(root: android.view.accessibility.AccessibilityNodeInfo): Boolean {
+    private fun isReelsScreen(root: AccessibilityNodeInfo): Boolean {
         val reelIds = listOf(
             "clips_viewer_video_container",
             "reel_viewer_container",

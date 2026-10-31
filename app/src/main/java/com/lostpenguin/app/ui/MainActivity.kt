@@ -23,10 +23,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lostpenguin.app.data.ReelStat
 import com.lostpenguin.app.util.AccessibilityUtils
+import com.lostpenguin.app.util.ScrollDebugLog
 
 class MainActivity : ComponentActivity() {
 
@@ -80,9 +82,59 @@ fun LostPenguinApp(
     val hasOverlay by viewModel.hasOverlayPermission.collectAsState()
     val hasAccessibility by viewModel.hasAccessibilityPermission.collectAsState()
     val updateInfo by viewModel.updateInfo.collectAsState()
+    var selectedTab by remember { mutableStateOf(0) }
 
+    Scaffold(
+        bottomBar = {
+            NavigationBar(containerColor = Color(0xFF1A1A2E)) {
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = { Text("📊") },
+                    label = { Text("Stats") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = { Text("🐛") },
+                    label = { Text("Debug") }
+                )
+            }
+        }
+    ) { padding ->
+        when (selectedTab) {
+            0 -> StatsScreen(
+                modifier = Modifier.padding(padding),
+                allStats = allStats,
+                last7Days = last7Days,
+                hasOverlay = hasOverlay,
+                hasAccessibility = hasAccessibility,
+                updateInfo = updateInfo,
+                todayCount = viewModel.todayCount,
+                onRequestOverlayPermission = onRequestOverlayPermission,
+                onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                onUpdate = { viewModel.openUpdate(it) }
+            )
+            1 -> DebugScreen(modifier = Modifier.padding(padding))
+        }
+    }
+}
+
+@Composable
+fun StatsScreen(
+    modifier: Modifier,
+    allStats: List<ReelStat>,
+    last7Days: List<ReelStat>,
+    hasOverlay: Boolean,
+    hasAccessibility: Boolean,
+    updateInfo: String?,
+    todayCount: Int,
+    onRequestOverlayPermission: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onUpdate: (String) -> Unit
+) {
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
         LazyColumn(
@@ -90,14 +142,12 @@ fun LostPenguinApp(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item { HeaderSection(todayCount = viewModel.todayCount) }
+            item { HeaderSection(todayCount = todayCount) }
 
-            // Update banner
             updateInfo?.let { info ->
-                item { UpdateBanner(version = info, onUpdate = { viewModel.openUpdate(it) }) }
+                item { UpdateBanner(version = info, onUpdate = onUpdate) }
             }
 
-            // Only show permission cards if permission not yet granted
             if (!hasOverlay) {
                 item {
                     PermissionCard(
@@ -123,9 +173,7 @@ fun LostPenguinApp(
             if (hasOverlay && hasAccessibility) {
                 item {
                     Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF1B3A2A)
-                        ),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B3A2A)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -135,11 +183,7 @@ fun LostPenguinApp(
                         ) {
                             Text("✓", fontSize = 20.sp, color = Color(0xFF4CAF50))
                             Column {
-                                Text(
-                                    "All set!",
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF4CAF50)
-                                )
+                                Text("All set!", fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
                                 Text(
                                     "LostPenguin is actively tracking your reels",
                                     style = MaterialTheme.typography.bodySmall,
@@ -151,33 +195,74 @@ fun LostPenguinApp(
                 }
             }
 
-            item {
-                Text(
-                    "Last 7 Days",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            item { Text("Last 7 Days", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { WeekBarChart(last7Days) }
+            item { Text("All Time", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
 
-            item {
-                Text(
-                    "All Time",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
             if (allStats.isEmpty()) {
                 item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                         Text("No data yet. Start watching reels!", color = Color.Gray)
                     }
                 }
             } else {
                 items(allStats) { stat -> StatRow(stat) }
+            }
+        }
+    }
+}
+
+@Composable
+fun DebugScreen(modifier: Modifier) {
+    var logs by remember { mutableStateOf(ScrollDebugLog.getLogs()) }
+
+    DisposableEffect(Unit) {
+        val listener = { logs = ScrollDebugLog.getLogs() }
+        ScrollDebugLog.addListener(listener)
+        onDispose { ScrollDebugLog.removeListener(listener) }
+    }
+
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Debug Log", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("${logs.size} events", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Open Instagram → scroll reels → come back here",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                if (logs.isEmpty()) {
+                    item {
+                        Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                            Text("No events yet", color = Color.Gray)
+                        }
+                    }
+                } else {
+                    items(logs) { log ->
+                        Text(
+                            text = log,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = when {
+                                log.contains("COUNTED") -> Color(0xFF4CAF50)
+                                log.contains("SCROLL") -> Color(0xFF4D9FFF)
+                                log.contains("ignored") -> Color(0xFFFF6B6B)
+                                else -> Color.White.copy(alpha = 0.7f)
+                            },
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                    }
+                }
             }
         }
     }
