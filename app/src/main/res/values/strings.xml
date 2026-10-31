@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LostPenguin</string>
+    <string name="accessibility_service_label">LostPenguin Reel Counter</string>
+    <string name="accessibility_service_description">Counts Instagram reels you watch and shows a live counter overlay</string>
+</resources>
